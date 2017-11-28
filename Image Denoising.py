@@ -281,12 +281,11 @@ def MVN_log_likelihood(X, model):
     Given image patches and a MVN model, return the log likelihood of the patches
     according to the model.
 
-    :param X: a patch_sizeXnumber_of_patches matrix of image patches.
+    :param X: a patch_size X number_of_patches matrix of image patches.
     :param model: A MVN_Model object.
     :return: The log likelihood of all the patches combined.
     """
-
-    # TODO: YOUR CODE HERE
+    return np.sum(np.log(multivariate_normal.pdf(X, model.mean, model.cov, allow_singular=True)))
 
 
 def GSM_log_likelihood(X, model):
@@ -299,7 +298,10 @@ def GSM_log_likelihood(X, model):
     :return: The log likelihood of all the patches combined.
     """
 
-    # TODO: YOUR CODE HERE
+    inners = np.zeros((N,k))
+    for kk in range(k):
+        inners[:, kk] = model.mix[kk] * multivariate_normal.pdf(X, model.gmm.means[kk], model.cov[kk], allow_singular=True)
+    return np.sum(np.log(np.sum(inners, axis=1)))
 
 
 def ICA_log_likelihood(X, model):
