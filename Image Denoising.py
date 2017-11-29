@@ -297,7 +297,6 @@ def GSM_log_likelihood(X, model):
     :param model: A GSM_Model object.
     :return: The log likelihood of all the patches combined.
     """
-
     inners = np.zeros((N,k))
     for kk in range(k):
         inners[:, kk] = model.mix[kk] * multivariate_normal.pdf(X, model.gmm.means[kk], model.cov[kk], allow_singular=True)
@@ -309,12 +308,20 @@ def ICA_log_likelihood(X, model):
     Given image patches and an ICA model, return the log likelihood of the patches
     according to the model.
 
-    :param X: a patch_sizeXnumber_of_patches matrix of image patches.
+    :param X: a patch_size X number_of_patches matrix of image patches.
     :param model: An ICA_Model object.
     :return: The log likelihood of all the patches combined.
     """
-
-    # TODO: YOUR CODE HERE
+    d = X.shape[0]
+    cov = (X.dot(X.T)) / N
+    eigvecs, _ = np.linalg.eigh(cov)
+    S = eigvecs.T.dot(X)
+    S_likelihoods = []
+    for i in range(d):
+        single = S[i, :]  # 1xd
+        gmm = GMM_Model(model.mix, model.means, model.cov)
+        S_likelihoods.append(MVN_log_likelihood(single, gmm))
+    return np.sum(S_likelihoods)
 
 
 def learn_GMM(X, k, initial_model, learn_mixture=True, learn_means=True,
@@ -351,8 +358,10 @@ def learn_MVN(X, k):
     mean = np.mean(X, axis=0)
     cov_tmp = X - mean[None,:]
     cov = cov_tmp.T.dot(cov_tmp) / N
-
-    return MVN_Model(mean, cov, None)
+    model = MVN_Model(mean, cov, None)
+    lle = MVN_log_likelihood(X, model)
+    print(lle)
+    return model
 
 
 def learn_GSM(X, k):
@@ -379,6 +388,8 @@ def learn_GSM(X, k):
 
     learnt_mean, learnt_cov, learnt_mix, lle = Expectation_Maximization(X, k, initial_model, max_iterations=5, learn_gsm=True)
     learnt_model = GSM_Model(learnt_cov, learnt_mix, GMM_Model(learnt_mix, learnt_mean, learnt_cov))
+    lle = GSM_log_likelihood(X, learnt_model)
+    print(lle)
     return learnt_model
 
 
@@ -408,12 +419,14 @@ def learn_ICA(X, k):
         means = np.zeros((k, 1))
         var = np.array([single.T.dot(single)] * k).reshape(k, 1, 1) / N
         initial_model = GMM_Model(mix, means, var)
-        model, lle = learn_GMM(single[None,:], k, initial_model, iterations=5)
+        model, lle = learn_GMM(single[None,:], k, initial_model)
         gmms.append(model)
         vars[i] = model.cov[:,0,0]
         mixtures[i] = model.mix
 
     learnt_ica_model = ICA_Model(eigvecs, vars, mixtures, gmms)
+    lle = ICA_log_likelihood(X, learnt_ica_model)
+    print(lle)
     return learnt_ica_model
 
 
@@ -451,9 +464,10 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
     epsilon = 0.1
 
     loglikelihoods = []
-    iter = 0
+    iters = 0
 
-    while (np.abs(initial_c - c) > epsilon).any() and iter < max_iterations:
+    while (np.abs(initial_c - c) > epsilon).any() and iters < max_iterations:
+        print(initial_c - c)
         for kk in range(k):
             # calculate c: calculate numerator and denominator separately in logspace,
             # and then divide and revert to original space
@@ -494,8 +508,8 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
         likelihood = 1 + np.sum(np.sum(inner_likelihood_matrix, axis=1), axis=0)
         loglikelihoods.append(likelihood)
 
-        iter += 1
-
+        iters += 1
+    print(iters)
     return mean, covariance, pi, loglikelihoods
 
 
@@ -633,13 +647,16 @@ if __name__ == '__main__':
     with open('train_images.pickle', 'rb') as f:
         train_pictures = pickle.load(f)
 
-    N = 2000
+    N = 2
     patches = sample_patches(train_pictures, psize=patch_size, n=N)
     k = 3
 
-    # model, denoise_func = learn_MVN(patches, 1), ICA_Denoise
+    # model, denoise_func = learn_MVN(patches, 1), MVN_Denoise
     model, denoise_func = learn_GSM(patches, k), GSM_Denoise
-    # model, denoise_func = learn_ICA(patches, k), GMM_Denoise
+    # model, denoise_func = learn_ICA(patches, k), ICA_Denoise
 
-    img = (greyscale_and_standardize(train_pictures)[0])
+    with open('test_images.pickle', 'rb') as g:
+        test_pictures = pickle.load(g)
+
+    img = (greyscale_and_standardize(test_pictures)[0])
     test_denoising(img, model, denoise_func, patch_size=patch_size)
