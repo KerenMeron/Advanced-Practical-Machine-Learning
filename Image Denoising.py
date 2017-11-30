@@ -7,6 +7,7 @@ import pickle
 import time
 from skimage.util import view_as_windows as viewW
 
+LLE_CONST = 1000000000
 
 def images_example(path='train_images.pickle'):
     """
@@ -167,7 +168,7 @@ def normalize_log_likelihoods(X):
 
 
 def test_denoising(image, model, denoise_function,
-                   noise_range=(0.01, 0.05, 0.1, 0.2), patch_size=(8, 8)):
+                   noise_range=(0.01, 0.05, 0.1, 0.2), patch_size=(8, 8), title=''):
     """
     A simple function for testing your denoising code. You can and should
     implement additional tests for your code.
@@ -204,6 +205,7 @@ def test_denoising(image, model, denoise_function,
         print(np.mean((cropped_original - denoised_images[i]) ** 2))
 
     plt.figure()
+    plt.suptitle(title)
     for i in range(len(noise_range)):
         plt.subplot(2, len(noise_range), i + 1)
         plt.imshow(noisy_images[:, :, i], cmap='gray')
@@ -286,7 +288,7 @@ def MVN_log_likelihood(X, model):
     :param model: A MVN_Model object.
     :return: The log likelihood of all the patches combined.
     """
-    return np.sum(np.log(multivariate_normal.pdf(X, model.mean, model.cov, allow_singular=True)))
+    return LLE_CONST + np.sum((multivariate_normal.logpdf(X, model.mean, model.cov, allow_singular=True)))
 
 
 def GSM_log_likelihood(X, model):
@@ -298,10 +300,21 @@ def GSM_log_likelihood(X, model):
     :param model: A GSM_Model object.
     :return: The log likelihood of all the patches combined.
     """
+    N = X.shape[0]
+    k = model.mix.shape[0]
     inners = np.zeros((N,k))
+    c_upper = np.ones((N, k))
     for kk in range(k):
-        inners[:, kk] = model.mix[kk] * multivariate_normal.pdf(X, model.gmm.means[kk], model.cov[kk], allow_singular=True)
-    return np.sum(np.log(np.sum(inners, axis=1)))
+        inners[:, kk] = np.log(model.mix[kk]) + multivariate_normal.logpdf(X, model.gmm.means[kk], model.cov[kk], allow_singular=True)
+        c_upper[:, kk] = np.log(model.mix[kk]) + multivariate_normal.logpdf(X, model.gmm.means[kk], model.cov[kk], allow_singular=True)
+
+    c_lower = logsumexp(c_upper, axis=1).reshape(N, 1)
+    c = c_upper - c_lower
+
+    for kk in range(k):
+        inners[:, kk] += c[:, kk]
+
+    return LLE_CONST + np.sum(inners)
 
 
 def ICA_log_likelihood(X, model):
@@ -321,9 +334,9 @@ def ICA_log_likelihood(X, model):
 
     for i in range(d):
         single = S[i, :][:, None]
-        mvn = MVN_Model(model.gmms[i].means[:,0], model.vars[i], model.gmms[i])
-        S_likelihoods.append(MVN_log_likelihood(single, mvn))
-    return np.sum(S_likelihoods)
+        gsm = GSM_Model(model.vars[i], model.mix[i], model.gmms[i])
+        S_likelihoods.append(GSM_log_likelihood(single, gsm))
+    return LLE_CONST + np.sum(S_likelihoods)
 
 
 def learn_GMM(X, k, initial_model, learn_mixture=True, learn_means=True,
@@ -361,9 +374,6 @@ def learn_MVN(X, k):
     cov_tmp = X - mean[None,:]
     cov = cov_tmp.T.dot(cov_tmp) / N
     model = MVN_Model(mean, cov, None)
-    b = time.time()
-    lle = MVN_log_likelihood(X, model)
-    print(lle)
     return model
 
 
@@ -385,14 +395,14 @@ def learn_GSM(X, k):
     cov_tmp = X - mean[0]
     single_cov = cov_tmp.T.dot(cov_tmp) / N
     base_cov = np.array([single_cov] * k)
+    for kk in range(k):
+        base_cov[kk] /= (kk+1)
     mix = np.array([float(1 / k)] * k)
     gmm_model = GMM_Model(mix, mean, base_cov)
     initial_model = GSM_Model(base_cov, mix, gmm_model)
 
-    learnt_mean, learnt_cov, learnt_mix, lle = Expectation_Maximization(X, k, initial_model, max_iterations=5, learn_gsm=True)
+    learnt_mean, learnt_cov, learnt_mix, lle = Expectation_Maximization(X, k, initial_model, max_iterations=100, learn_gsm=True)
     learnt_model = GSM_Model(learnt_cov, learnt_mix, GMM_Model(learnt_mix, learnt_mean, learnt_cov))
-    lle = GSM_log_likelihood(X, learnt_model)
-    print(lle)
     return learnt_model
 
 
@@ -414,7 +424,6 @@ def learn_ICA(X, k):
     S = eigvecs.T.dot(X)
     vars = np.zeros((d, k))
     mixtures = np.zeros((d, k))
-
     gmms = []
     for i in range(d):
         single = S[i,:]
@@ -423,18 +432,15 @@ def learn_ICA(X, k):
         var = np.array([single.T.dot(single)] * k).reshape(k, 1, 1) / N
         initial_model = GMM_Model(mix, means, var)
         model, lle = learn_GMM(single[None,:], k, initial_model)
-        print(i, lle)
         gmms.append(model)
         vars[i] = model.cov[:,0,0]
         mixtures[i] = model.mix
 
     learnt_ica_model = ICA_Model(eigvecs, vars, mixtures, gmms)
-    lle = ICA_log_likelihood(X, learnt_ica_model)
-    print('ica', lle)
     return learnt_ica_model
 
 
-def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=False):
+def Expectation_Maximization(samples, k, model, max_iterations=100, learn_gsm=False):
     '''
     Run the iterative EM Algorithm on the given data.
     :param samples: [numpy.ndarray] 2d array, each row contains a flattened image patch of size d. Nxd
@@ -443,14 +449,13 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
     :param learn_gsm: if True, do not learn mean and assume cov=r*single_cov, where we need to learn r.
     :return: mean, covariance, pi, list of log likelihoods for each iteration
     '''
-    d = samples.shape[1]
-    N = samples.shape[0]
+    N, d = samples.shape
 
     # initialize parameters
     c = np.ones((N, k))  # probability of y given a guassian distribution, N x k
     pi = model.mix  # mixture, probability of y, multiplication of c, 1 x k
     covariance = model.cov  # k x d x d
-    r_squared = np.ones((k,1)) / k  # coefficient of each covariance
+    r_squared = np.random.rand(k,1)
     if learn_gsm:
         mean = model.gmm.means
     else:
@@ -464,14 +469,12 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
         covariance = base_cov
 
     # convergence parameter
-    initial_c = c + 1
-    epsilon = 0.1
+    epsilon = 0.0000001
 
     loglikelihoods = []
     iters = 0
 
-    while (np.abs(initial_c - c) > epsilon).any() and iters < max_iterations:
-        
+    while iters < max_iterations:
         for kk in range(k):
             # calculate c: calculate numerator and denominator separately in logspace,
             # and then divide and revert to original space
@@ -491,30 +494,37 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
         # calculate r
         if learn_gsm:
             for kk in range(k):
-                numerator = np.sum(c[:, kk] * np.diag(samples.dot(np.linalg.pinv(covariance[kk])).dot(samples.T)))
-                r_squared[kk] = numerator / (d * np.sum(c[:, kk], axis=0))
+                numerator = np.sum(c[:, kk] * np.diag(samples.dot(np.linalg.pinv(base_cov[kk])).dot(samples.T)))
+                r_squared[kk] = numerator / (d * np.sum(c[:, kk]))
 
         # calculate Sigma (covariance)
-        else:
-            for kk in range(k):
-                if learn_gsm:
-                    covariance[i] = base_cov[i] * r_squared[i]
-                else:
-                    covariance[kk] = np.dot(c[:, kk] * (samples - mean[kk]).T, (samples - mean[kk]))
-                    covariance[kk] = covariance[kk] / np.sum(c[:, kk])
+        for kk in range(k):
+            if learn_gsm:
+                covariance[kk] = base_cov[kk] * r_squared[kk]
+            else:
+                covariance[kk] = np.dot(c[:, kk] * (samples - mean[kk]).T, (samples - mean[kk]))
+                covariance[kk] = covariance[kk] / np.sum(c[:, kk])
 
         # calculate log likelihood of parameters
-        inner_likelihood_matrix = np.array(c)
-        for kk in range(k):
-            inner = pi[kk] * multivariate_normal.pdf(samples, mean[kk], covariance[kk], allow_singular=True)
-            inner_likelihood_matrix[:, kk] = c[:, kk] * np.log(inner)
+        tmp_model = GSM_Model(covariance, pi, GMM_Model(pi, mean, covariance))
+        loglikelihoods.append(GSM_log_likelihood(samples, tmp_model))
 
-        likelihood = 1 + np.sum(np.sum(inner_likelihood_matrix, axis=1), axis=0)
-        loglikelihoods.append(likelihood)
+        print(loglikelihoods[iters])
 
+        if iters >= 2 and np.abs(loglikelihoods[iters] - loglikelihoods[iters-1]) < epsilon:
+            break
         iters += 1
-    print("iters: %d)" %  iters)
+
+    plot_lle(loglikelihoods)
     return mean, covariance, pi, loglikelihoods
+
+
+def plot_lle(lle):
+    plt.figure()
+    plt.title('Log likelihood per iteration')
+    x_vals = list(range(len(lle)))
+    plt.plot(lle)
+    plt.show()
 
 
 def weiner_filter(y, mean, cov, noise_std):
@@ -529,19 +539,7 @@ def weiner_filter(y, mean, cov, noise_std):
     d = y.shape[1]
     cov_inv = np.linalg.pinv(cov)
     weiner = np.linalg.pinv(cov_inv + (np.identity(d) / np.power(noise_std, 2)))
-    a1 = time.time()
-    step1 = cov_inv.dot(mean)
-    a2 = time.time()
-    step2 = (1 / np.power(noise_std, 2)) * y
-    a3 = time.time()
-    print(step2.shape, weiner)
-    step3 = step2.dot(weiner)
-    weiner = step1 + step3
-    # weiner = (cov_inv.dot(mean) + (y / np.power(noise_std, 2))).dot(weiner)
-    a4 = time.time()
-    print(a2-a1, a3-a2, a4-a3)
-    import sys
-    # sys.exit(1)
+    weiner = (cov_inv.dot(mean) + (y / np.power(noise_std, 2))).dot(weiner)
     return weiner
 
 
@@ -657,22 +655,45 @@ def ICA_Denoise(Y, ica_model, noise_std):
     return final
 
 
+
 if __name__ == '__main__':
 
+    # open data
     patch_size = (8, 8)
     with open('train_images.pickle', 'rb') as f:
         train_pictures = pickle.load(f)
 
-    N = 200
+    N = 2000
     patches = sample_patches(train_pictures, psize=patch_size, n=N)
-    k = 5
-
-    # model, denoise_func = learn_MVN(patches, 1), MVN_Denoise
-    model, denoise_func = learn_GSM(patches, k), GSM_Denoise
-    # model, denoise_func =   learn_ICA(patches, k), ICA_Denoise
+    k = 15
 
     with open('test_images.pickle', 'rb') as g:
         test_pictures = pickle.load(g)
+    img = (greyscale_and_standardize(test_pictures)[0])
+    cols = im2col(img, patch_size)
 
-    img = (greyscale_and_standardize(test_pictures)[4])
-    test_denoising(img, model, denoise_func, patch_size=patch_size)
+
+    # learn and denoise
+
+    # print("=== MVN ===")
+    # a = time.time()
+    # model, denoise_func, title = learn_MVN(patches, 1), MVN_Denoise, "MVN"
+    # print(MVN_log_likelihood(noisy_patches.T, model))
+    #
+    # # test_denoising(img, model, denoise_func, patch_size=patch_size)
+    #
+    #
+    # print("=== GSM ===")
+    model, denoise_func, title = learn_GSM(patches, k), GSM_Denoise, 'GSM'
+    # print(GSM_log_likelihood(cols.T, model))
+
+    test_denoising(img, model, denoise_func, patch_size=patch_size, title=title)
+
+
+    print("=== ICA ===")
+    # model, denoise_func = learn_ICA(patches, k), ICA_Denoise
+    # test_denoising(img, model, denoise_func, patch_size=patch_size)
+    # print(ICA_log_likelihood(noisy_patches, model))
+
+
+    # test_denoising(img, model, denoise_func, patch_size=patch_size)
