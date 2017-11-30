@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
 from scipy.misc import logsumexp
 import pickle
+import time
 from skimage.util import view_as_windows as viewW
 
 
@@ -285,8 +286,7 @@ def MVN_log_likelihood(X, model):
     :param model: A MVN_Model object.
     :return: The log likelihood of all the patches combined.
     """
-    print(X.shape, model.mean.shape, model.cov.shape)
-    return np.sum(np.log(multivariate_normal.pdf(X, model.mean[:,0], model.cov, allow_singular=True)))
+    return np.sum(np.log(multivariate_normal.pdf(X, model.mean, model.cov, allow_singular=True)))
 
 
 def GSM_log_likelihood(X, model):
@@ -315,13 +315,13 @@ def ICA_log_likelihood(X, model):
     """
     d = X.shape[0]
     cov = (X.dot(X.T)) / N
-    eigvecs, _ = np.linalg.eigh(cov)
-    S = eigvecs.T.dot(X)[:,None]
+    _, eigvecs = np.linalg.eigh(cov)
+    S = eigvecs.T.dot(X)
     S_likelihoods = []
 
     for i in range(d):
-        single = S[i, :]  # 1xd
-        mvn = MVN_Model(model.gmms[i].means, model.vars[i], model.gmms[i])
+        single = S[i, :][:, None]
+        mvn = MVN_Model(model.gmms[i].means[:,0], model.vars[i], model.gmms[i])
         S_likelihoods.append(MVN_log_likelihood(single, mvn))
     return np.sum(S_likelihoods)
 
@@ -361,6 +361,7 @@ def learn_MVN(X, k):
     cov_tmp = X - mean[None,:]
     cov = cov_tmp.T.dot(cov_tmp) / N
     model = MVN_Model(mean, cov, None)
+    b = time.time()
     lle = MVN_log_likelihood(X, model)
     print(lle)
     return model
@@ -409,26 +410,27 @@ def learn_ICA(X, k):
     """
     d, N = X.shape
     cov = (X.dot(X.T)) / N
-    eigvecs, _ = np.linalg.eigh(cov)
+    _, eigvecs = np.linalg.eigh(cov)
     S = eigvecs.T.dot(X)
     vars = np.zeros((d, k))
     mixtures = np.zeros((d, k))
 
     gmms = []
     for i in range(d):
-        single = S[i:,]
+        single = S[i,:]
         mix = np.array([float(1 / k)] * k)
         means = np.zeros((k, 1))
         var = np.array([single.T.dot(single)] * k).reshape(k, 1, 1) / N
         initial_model = GMM_Model(mix, means, var)
         model, lle = learn_GMM(single[None,:], k, initial_model)
+        print(i, lle)
         gmms.append(model)
         vars[i] = model.cov[:,0,0]
         mixtures[i] = model.mix
 
     learnt_ica_model = ICA_Model(eigvecs, vars, mixtures, gmms)
     lle = ICA_log_likelihood(X, learnt_ica_model)
-    print(lle)
+    print('ica', lle)
     return learnt_ica_model
 
 
@@ -527,7 +529,19 @@ def weiner_filter(y, mean, cov, noise_std):
     d = y.shape[1]
     cov_inv = np.linalg.pinv(cov)
     weiner = np.linalg.pinv(cov_inv + (np.identity(d) / np.power(noise_std, 2)))
-    weiner = (cov_inv.dot(mean) + (y / np.power(noise_std, 2))).dot(weiner)
+    a1 = time.time()
+    step1 = cov_inv.dot(mean)
+    a2 = time.time()
+    step2 = (1 / np.power(noise_std, 2)) * y
+    a3 = time.time()
+    print(step2.shape, weiner)
+    step3 = step2.dot(weiner)
+    weiner = step1 + step3
+    # weiner = (cov_inv.dot(mean) + (y / np.power(noise_std, 2))).dot(weiner)
+    a4 = time.time()
+    print(a2-a1, a3-a2, a4-a3)
+    import sys
+    # sys.exit(1)
     return weiner
 
 
@@ -654,11 +668,11 @@ if __name__ == '__main__':
     k = 5
 
     # model, denoise_func = learn_MVN(patches, 1), MVN_Denoise
-    # model, denoise_func = learn_GSM(patches, k), GSM_Denoise
-    model, denoise_func = learn_ICA(patches, k), ICA_Denoise
+    model, denoise_func = learn_GSM(patches, k), GSM_Denoise
+    # model, denoise_func =   learn_ICA(patches, k), ICA_Denoise
 
     with open('test_images.pickle', 'rb') as g:
         test_pictures = pickle.load(g)
 
-    img = (greyscale_and_standardize(test_pictures)[0])
+    img = (greyscale_and_standardize(test_pictures)[4])
     test_denoising(img, model, denoise_func, patch_size=patch_size)
