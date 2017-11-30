@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
 from scipy.misc import logsumexp
 import pickle
-import time
 from skimage.util import view_as_windows as viewW
 
 LLE_CONST = 1000000000
+
 
 def images_example(path='train_images.pickle'):
     """
@@ -469,7 +469,7 @@ def Expectation_Maximization(samples, k, model, max_iterations=100, learn_gsm=Fa
         covariance = base_cov
 
     # convergence parameter
-    epsilon = 0.0000001
+    epsilon = 0.0001
 
     loglikelihoods = []
     iters = 0
@@ -509,8 +509,6 @@ def Expectation_Maximization(samples, k, model, max_iterations=100, learn_gsm=Fa
         tmp_model = GSM_Model(covariance, pi, GMM_Model(pi, mean, covariance))
         loglikelihoods.append(GSM_log_likelihood(samples, tmp_model))
 
-        print(loglikelihoods[iters])
-
         if iters >= 2 and np.abs(loglikelihoods[iters] - loglikelihoods[iters-1]) < epsilon:
             break
         iters += 1
@@ -521,8 +519,7 @@ def Expectation_Maximization(samples, k, model, max_iterations=100, learn_gsm=Fa
 
 def plot_lle(lle):
     plt.figure()
-    plt.title('Log likelihood per iteration')
-    x_vals = list(range(len(lle)))
+    plt.title('EM Log-Likelihoods GSM')
     plt.plot(lle)
     plt.show()
 
@@ -655,7 +652,6 @@ def ICA_Denoise(Y, ica_model, noise_std):
     return final
 
 
-
 if __name__ == '__main__':
 
     # open data
@@ -670,30 +666,13 @@ if __name__ == '__main__':
     with open('test_images.pickle', 'rb') as g:
         test_pictures = pickle.load(g)
     img = (greyscale_and_standardize(test_pictures)[0])
-    cols = im2col(img, patch_size)
-
 
     # learn and denoise
 
-    # print("=== MVN ===")
-    # a = time.time()
+    # UNCOMMENT the model you are interested in learning
     # model, denoise_func, title = learn_MVN(patches, 1), MVN_Denoise, "MVN"
-    # print(MVN_log_likelihood(noisy_patches.T, model))
-    #
-    # # test_denoising(img, model, denoise_func, patch_size=patch_size)
-    #
-    #
-    # print("=== GSM ===")
-    model, denoise_func, title = learn_GSM(patches, k), GSM_Denoise, 'GSM'
-    # print(GSM_log_likelihood(cols.T, model))
-
-    test_denoising(img, model, denoise_func, patch_size=patch_size, title=title)
-
-
-    print("=== ICA ===")
+    # model, denoise_func, title = learn_GSM(patches, k), GSM_Denoise, 'GSM'
     # model, denoise_func = learn_ICA(patches, k), ICA_Denoise
-    # test_denoising(img, model, denoise_func, patch_size=patch_size)
-    # print(ICA_log_likelihood(noisy_patches, model))
 
-
+    # UNCOMMENT to run denoising
     # test_denoising(img, model, denoise_func, patch_size=patch_size)
