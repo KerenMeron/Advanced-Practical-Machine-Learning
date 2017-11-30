@@ -526,7 +526,7 @@ def plot_lle(lle):
 
 def weiner_filter(y, mean, cov, noise_std):
     '''
-    
+    Run weiner filter on input, and return filtered result.
     :param y: samples N x d
     :param mean: array k x d
     :param cov: array k x d x d
@@ -536,7 +536,10 @@ def weiner_filter(y, mean, cov, noise_std):
     d = y.shape[1]
     cov_inv = np.linalg.pinv(cov)
     weiner = np.linalg.pinv(cov_inv + (np.identity(d) / np.power(noise_std, 2)))
-    weiner = (cov_inv.dot(mean) + (y / np.power(noise_std, 2))).dot(weiner)
+    inner1 = cov_inv.dot(mean)
+    inner2 = y / np.power(noise_std, 2)
+    inner = inner1 + inner2
+    weiner = inner.dot(weiner)
     return weiner
 
 
@@ -671,8 +674,8 @@ if __name__ == '__main__':
 
     # UNCOMMENT the model you are interested in learning
     # model, denoise_func, title = learn_MVN(patches, 1), MVN_Denoise, "MVN"
-    # model, denoise_func, title = learn_GSM(patches, k), GSM_Denoise, 'GSM'
-    # model, denoise_func = learn_ICA(patches, k), ICA_Denoise
+    # model, denoise_func, title = learn_GSM(patches, k), GSM_Denoise, "GSM"
+    # model, denoise_func, title = learn_ICA(patches, k), ICA_Denoise, "ICA"
 
     # UNCOMMENT to run denoising
-    # test_denoising(img, model, denoise_func, patch_size=patch_size)
+    # test_denoising(img, model, denoise_func, patch_size=patch_size, title=title)
