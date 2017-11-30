@@ -315,12 +315,13 @@ def ICA_log_likelihood(X, model):
     d = X.shape[0]
     cov = (X.dot(X.T)) / N
     eigvecs, _ = np.linalg.eigh(cov)
-    S = eigvecs.T.dot(X)
+    S = eigvecs.T.dot(X)[:,None]
     S_likelihoods = []
+
     for i in range(d):
         single = S[i, :]  # 1xd
-        gmm = GMM_Model(model.mix, model.means, model.cov)
-        S_likelihoods.append(MVN_log_likelihood(single, gmm))
+        mvn = MVN_Model(model.gmms[i].means, model.vars[i], model.gmms[i])
+        S_likelihoods.append(MVN_log_likelihood(single, mvn))
     return np.sum(S_likelihoods)
 
 
@@ -467,7 +468,7 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
     iters = 0
 
     while (np.abs(initial_c - c) > epsilon).any() and iters < max_iterations:
-        print(initial_c - c)
+        
         for kk in range(k):
             # calculate c: calculate numerator and denominator separately in logspace,
             # and then divide and revert to original space
@@ -477,7 +478,7 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
         c = np.exp(c - denominator_log)
 
         # calculate pi
-        pi = np.sum(c, axis=0) / d
+        pi = np.sum(c, axis=0) / N
 
         # calculate mu (mean)
         if not learn_gsm:
@@ -487,7 +488,7 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
         # calculate r
         if learn_gsm:
             for kk in range(k):
-                numerator = np.sum(c[:, kk] * np.diag(samples.dot(np.linalg.pinv(base_cov[kk])).dot(samples.T)))
+                numerator = np.sum(c[:, kk] * np.diag(samples.dot(np.linalg.pinv(covariance[kk])).dot(samples.T)))
                 r_squared[kk] = numerator / (d * np.sum(c[:, kk], axis=0))
 
         # calculate Sigma (covariance)
@@ -509,7 +510,7 @@ def Expectation_Maximization(samples, k, model, max_iterations=20, learn_gsm=Fal
         loglikelihoods.append(likelihood)
 
         iters += 1
-    print(iters)
+    print("iters: %d)" %  iters)
     return mean, covariance, pi, loglikelihoods
 
 
@@ -647,13 +648,13 @@ if __name__ == '__main__':
     with open('train_images.pickle', 'rb') as f:
         train_pictures = pickle.load(f)
 
-    N = 2
+    N = 200
     patches = sample_patches(train_pictures, psize=patch_size, n=N)
-    k = 3
+    k = 5
 
     # model, denoise_func = learn_MVN(patches, 1), MVN_Denoise
-    model, denoise_func = learn_GSM(patches, k), GSM_Denoise
-    # model, denoise_func = learn_ICA(patches, k), ICA_Denoise
+    # model, denoise_func = learn_GSM(patches, k), GSM_Denoise
+    model, denoise_func = learn_ICA(patches, k), ICA_Denoise
 
     with open('test_images.pickle', 'rb') as g:
         test_pictures = pickle.load(g)
