@@ -285,7 +285,8 @@ def MVN_log_likelihood(X, model):
     :param model: A MVN_Model object.
     :return: The log likelihood of all the patches combined.
     """
-    return np.sum(np.log(multivariate_normal.pdf(X, model.mean, model.cov, allow_singular=True)))
+    print(X.shape, model.mean.shape, model.cov.shape)
+    return np.sum(np.log(multivariate_normal.pdf(X, model.mean[:,0], model.cov, allow_singular=True)))
 
 
 def GSM_log_likelihood(X, model):
