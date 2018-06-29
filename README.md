@@ -1,2 +1,8 @@
-# Image-Denoising
-Denoise Images using different models
+# Advanced Practical Machine Learning
+Manifold Learning
+
+Autoencoders
+
+Clustering
+
+Image Denoising
